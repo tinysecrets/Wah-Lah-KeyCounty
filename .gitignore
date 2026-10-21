@@ -1,0 +1,12 @@
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.DS_Store
+node_modules/
+dist/
+coverage/
+playwright-report/
+test-results/
