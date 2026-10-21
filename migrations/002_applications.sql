@@ -1,0 +1,21 @@
+CREATE TABLE IF NOT EXISTS applications (
+ id BIGSERIAL PRIMARY KEY,
+ reference_code TEXT NOT NULL UNIQUE,
+ home_id BIGINT NOT NULL REFERENCES homes(id) ON DELETE RESTRICT,
+ full_name TEXT NOT NULL,
+ email TEXT NOT NULL,
+ phone TEXT NOT NULL,
+ move_in_date TEXT NOT NULL,
+ monthly_income INTEGER NOT NULL DEFAULT 0,
+ occupants INTEGER NOT NULL DEFAULT 1,
+ answers JSONB NOT NULL DEFAULT '{}'::jsonb,
+ status TEXT NOT NULL DEFAULT 'awaiting_payment',
+ payment_status TEXT NOT NULL DEFAULT 'unpaid',
+ payment_method TEXT,
+ payment_reference TEXT,
+ fee_cents INTEGER NOT NULL,
+ paid_at TIMESTAMPTZ,
+ admin_notes TEXT,
+ created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+)
