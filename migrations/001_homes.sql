@@ -1,0 +1,23 @@
+CREATE TABLE IF NOT EXISTS homes (
+ id BIGSERIAL PRIMARY KEY,
+ slug TEXT NOT NULL UNIQUE,
+ title TEXT NOT NULL,
+ address TEXT NOT NULL,
+ city TEXT NOT NULL,
+ state TEXT NOT NULL,
+ zip TEXT NOT NULL,
+ rent_cents INTEGER NOT NULL,
+ deposit_cents INTEGER NOT NULL,
+ bedrooms INTEGER NOT NULL,
+ bathrooms DOUBLE PRECISION NOT NULL,
+ sqft INTEGER NOT NULL,
+ property_type TEXT NOT NULL DEFAULT 'Single-family home',
+ description TEXT NOT NULL,
+ image_url TEXT NOT NULL,
+ features JSONB NOT NULL DEFAULT '[]'::jsonb,
+ pets_allowed BOOLEAN NOT NULL DEFAULT FALSE,
+ available_from TEXT NOT NULL,
+ is_available BOOLEAN NOT NULL DEFAULT TRUE,
+ featured BOOLEAN NOT NULL DEFAULT FALSE,
+ created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+)
