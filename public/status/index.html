@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Privately check the status of a Wah-Lah KeyCounty rental application.">
+<title>Application status | Wah-Lah KeyCounty</title>
+<link rel="stylesheet" href="/theme.css">
+</head>
+<body>
+<header class="nav"><div class="wrap navin"><a class="brand" href="/"><span>Wah-Lah</span> KeyCounty</a><a href="/">Browse homes</a></div></header>
+<main class="statusbox wrap">
+  <div class="formbox">
+    <div class="eyebrow">Application status</div>
+    <h1 style="font:700 42px 'Playfair Display',Georgia,serif">Check your application</h1>
+    <p class="muted">Enter the reference code and the email address used on the application. Both are required to view status details.</p>
+    <form id="f">
+      <div class="field"><label for="code">Reference code</label><input id="code" required maxlength="60" autocomplete="off" placeholder="RA-…"></div>
+      <div class="field" style="margin-top:14px"><label for="email">Application email</label><input id="email" type="email" required maxlength="180" autocomplete="email" placeholder="you@example.com"></div>
+      <button class="btn primary" style="margin-top:18px">Check status</button>
+    </form>
+    <div id="result" class="notice hidden" style="margin-top:18px" aria-live="polite"></div>
+    <p class="muted small" style="margin-top:18px">Online payments are paused. This page does not collect payment details or confirm that money was received.</p>
+  </div>
+</main>
+<footer class="footer"><div class="wrap"><a href="/policy/">Privacy & application policy</a> · <a href="/">Wah-Lah KeyCounty</a></div></footer>
+<script>
+const form=document.querySelector('#f'),result=document.querySelector('#result'),button=form.querySelector('button');
+const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+form.addEventListener('submit',async e=>{
+  e.preventDefault();result.classList.remove('hidden','error','success');result.textContent='Checking…';button.disabled=true;
+  try {
+    const code=encodeURIComponent(document.querySelector('#code').value.trim()),email=encodeURIComponent(document.querySelector('#email').value.trim());
+    const response=await fetch('/api/status?code='+code+'&email='+email),data=await response.json();
+    if(!response.ok)throw new Error(data.error||'Unable to find that application.');
+    result.classList.add('success');
+    result.innerHTML='<b>'+esc(data.title)+'</b><br>'+esc(data.city)+', '+esc(data.state)+'<br>Reference: <strong>'+esc(data.reference_code)+'</strong><br>Application: <strong>'+esc(String(data.status||'').replaceAll('_',' '))+'</strong><br>Payment: <strong>'+esc(String(data.payment_status||'').replaceAll('_',' '))+'</strong><br>Settlement: <strong>'+esc(String(data.settlement_status||'').replaceAll('_',' '))+'</strong><br>Payout: <strong>'+esc(String(data.payout_status||'').replaceAll('_',' '))+'</strong>';
+  } catch(err) { result.classList.add('error');result.textContent=err.message; }
+  finally { button.disabled=false; }
+});
+</script>
+</body>
+</html>
