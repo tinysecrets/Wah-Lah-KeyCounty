@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /__page/
+
+Sitemap: https://wah-lah-keycounty.hatchable.site/sitemap.xml

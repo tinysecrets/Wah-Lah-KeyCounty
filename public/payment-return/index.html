@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Secure payment confirmation for Wah-Lah KeyCounty home-connection requests.">
+<title>Payment status | Wah-Lah KeyCounty</title>
+<link rel="stylesheet" href="/theme.css">
+</head>
+<body>
+<header class="nav"><div class="wrap navin"><a class="brand" href="/"><span style="color:#20c7b7">Wah-Lah</span> KeyCounty</a><a href="/">Browse homes</a></div></header>
+<main class="statusbox wrap">
+  <section class="formbox">
+    <div class="eyebrow">Secure checkout</div>
+    <h1 style="font:700 clamp(32px,6vw,46px)/1.1 Georgia,serif">Payment confirmation</h1>
+    <p class="muted">Thank you for using Wah-Lah KeyCounty. We confirm payment only after the payment provider's verified webhook records the completed transaction.</p>
+    <div id="payment-result" class="notice" aria-live="polite">Checking the payment confirmation…</div>
+    <div class="actions"><button id="refresh-payment" class="btn secondary" type="button">Refresh payment status</button><a id="status-link" class="btn primary" href="/status/">Check request status</a></div>
+    <p class="muted small">The one-time Home Connection Service fee shown at checkout is separate from the property price, rent, deposits, and any charges set by the property owner.</p>
+  </section>
+</main>
+<footer class="footer"><div class="wrap"><a href="/policy/">Privacy &amp; application policy</a> · <a href="/">Wah-Lah KeyCounty</a></div></footer>
+<script>
+const output=document.querySelector('#payment-result'),refresh=document.querySelector('#refresh-payment');
+const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function celebratePayment(key){try{const k='keycounty-celebrated:'+key;if(sessionStorage.getItem(k))return;sessionStorage.setItem(k,'1')}catch(_){}const colors=['#20c7b7','#e8c66a','#8b7cf6','#ffffff','#ff8b7b'];const style=document.createElement('style');style.textContent='@keyframes kc-confetti-fall{to{transform:translateY(110vh) rotate(760deg);opacity:0}}';document.head.append(style);for(let i=0;i<140;i++){const piece=document.createElement('i');piece.style.cssText='position:fixed;z-index:99999;top:-14px;left:'+(Math.random()*100)+'vw;width:8px;height:12px;border-radius:2px;background:'+colors[i%colors.length]+';pointer-events:none;animation:kc-confetti-fall '+(2+Math.random()*2.2)+'s linear '+(Math.random()*.8)+'s forwards';document.body.append(piece);setTimeout(()=>piece.remove(),5200)}}
+async function updatePayment(){
+ const params=new URLSearchParams(location.search);
+ const sessionId=params.get('session_id');
+ const id=sessionId||params.get('_ptxn')||params.get('transaction_id');
+ output.className='notice';output.textContent='Checking the payment confirmation…';refresh.disabled=true;
+ if(!id){output.classList.add('error');output.textContent='The checkout session is missing. Open your request-status page or contact admin@wah-lah.com for help.';refresh.disabled=false;return;}
+ try{
+  const endpoint=sessionId?'/api/payment-return?session_id=':'/api/payment-return?transaction_id=';
+  const response=await fetch(endpoint+encodeURIComponent(id),{cache:'no-store'});
+  const data=await response.json();
+  if(!response.ok)throw new Error(data.error||'Could not check payment status.');
+  if(data.confirmed){
+   celebratePayment(id);
+   output.classList.add('success');
+   output.innerHTML='<strong>Payment confirmed.</strong><br>Home-connection reference: <strong>'+esc(data.referenceCode)+'</strong><br>Amount received: <strong>$'+(Number(data.feeCents||0)/100).toFixed(2)+'</strong><br>Payment is recorded. Use your email and reference code to check your home-connection request. KeyCounty will follow up about the selected property.';
+  }else{
+   output.classList.add('');output.textContent=data.message||'We are waiting for Paddle to confirm this payment. Please refresh shortly; do not submit another payment while this one is processing.';
+  }
+ }catch(error){output.className='notice error';output.textContent=error.message||'Payment status is temporarily unavailable.'}
+ finally{refresh.disabled=false;}
+}
+refresh.addEventListener('click',updatePayment);updatePayment();
+</script>
+</body>
+</html>

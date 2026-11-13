@@ -1,19 +1,38 @@
 # Wah-Lah KeyCounty
 
-Wah-Lah KeyCounty is a rental marketplace by Wah-Lah Industries.
+This repository is the reviewed source mirror for the live Hatchable application.
 
-## Live application
-- Public site: https://wah-lah-keycounty.hatchable.site
-- Hosting and runtime: Hatchable
+- Production application: https://wah-lah-keycounty.hatchable.site
+- Production platform: Hatchable
+- Production version mirrored: 48 (source inventory checked 2026-11-13)
+- Source of truth for the running site: Hatchable
+- GitHub-to-Hatchable deployment: **not automatic**
 
-## Current operating rules
-- Public property submissions are held for review; nothing publishes automatically.
-- Owner authorization and listing-publication safeguards remain in place.
-- Online payments are paused until a payment provider is approved and the full flow is verified.
-- Application records and production database contents are not stored in this repository.
+## Synchronization
 
-## Source snapshot
-This repository tracks the application source and SQL migrations. Runtime services, environment configuration, secrets, and production database data remain outside GitHub. Binary listing photos are maintained by the hosted project and are not included in this initial text-source sync.
+Hatchable source is mirrored into GitHub by an explicit, reviewed sync. A commit or merge in this repository does not deploy to Hatchable. Keep production changes and GitHub source aligned through a deliberate review and sync process.
 
-## Deployment
-The live Hatchable deployment is managed separately. Changes in this repository do not automatically deploy to Hatchable.
+The `sync/hatchable-v48-2026-11-13` branch contains the source snapshot prepared from Hatchable version 48. Review and merge that branch before treating GitHub `main` as the current mirror.
+
+## Repository contents
+
+The mirror includes the Hatchable application API routes, page modules, public HTML/CSS and site files, SQL migrations, database source contract, growth-pulse library, seed script, and `hatchable.toml` schedule/secret-name declarations.
+
+## Exclusions and security
+
+The sync intentionally excludes:
+
+- Runtime secrets, credentials, and production environment values. Secret *names* and descriptions in `hatchable.toml` are configuration metadata only.
+- Production database contents, application records, customer information, and runtime state.
+- Binary property/listing photos, which remain managed by the hosted Hatchable project.
+- Hatchable-generated `AGENTS.md`, which is virtual platform output and must not be edited or committed.
+- `public/.env.example`, because environment templates do not belong inside a publicly served directory.
+
+Never commit `.env` files containing real values, API keys, webhook secrets, payment credentials, or production data.
+
+## Important operating notes
+
+- Review SQL migrations before applying them to any database. Mirroring migrations does not execute them.
+- Payment provider code and secret declarations in source do not prove that live checkout is enabled or approved.
+- Verify payment credentials, merchant authorization, webhook delivery, and end-to-end transactions separately before accepting payments.
+- Hatchable remains the live production system unless a separate, explicitly approved deployment process is performed.
