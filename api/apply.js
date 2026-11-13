@@ -47,9 +47,24 @@ export default async function (req, res) {
   };
 
   await db.query(
-    "INSERT INTO applications (reference_code,home_id,full_name,email,phone,move_in_date,monthly_income,occupants,answers,fee_cents,status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,'under_review')",
+    "INSERT INTO applications (reference_code,home_id,full_name,email,phone,move_in_date,monthly_income,occupants,answers,fee_cents,status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,'awaiting_payment')",
     [ref, homeId, fullName, email, phone, moveInDate, Math.round(incomeInput), occupants, JSON.stringify(answers), fee]
   );
 
-  return res.status(201).json({ ok: true, referenceCode: ref, feeCents: fee, paymentCollected: false });
+  if (fee === 0) {
+    await db.query("UPDATE applications SET payment_status='paid',status='under_review',updated_at=now() WHERE reference_code=$1", [ref]);
+    return res.status(201).json({ ok: true, referenceCode: ref, feeCents: 0, paymentRequired: false, paymentCollected: true });
+  }
+
+  // Stripe Checkout is created server-side after the application is saved.
+
+  return res.status(201).json({
+    ok: true,
+    referenceCode: ref,
+    feeCents: fee,
+    paymentRequired: true,
+    paymentCollected: false,
+    email,
+    message: "Your rental application is saved. Continue to secure Stripe checkout to pay the application fee."
+  });
 }

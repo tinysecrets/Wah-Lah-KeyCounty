@@ -1,0 +1,1 @@
+ALTER TABLE connection_requests ADD COLUMN IF NOT EXISTS consent_to_contact BOOLEAN NOT NULL DEFAULT false;

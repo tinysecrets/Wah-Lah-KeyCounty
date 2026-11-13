@@ -1,0 +1,94 @@
+[[cron]]
+path = "/api/jobs/listing-freshness"
+schedule = "0 * * * *"
+
+[[cron]]
+path = "/api/jobs/scout-discovery"
+schedule = "0 * * * *"
+
+[[cron]]
+path = "/api/jobs/daily-growth-pulse"
+schedule = "0 13 * * *"
+
+[[cron]]
+path = "/api/jobs/guardian"
+schedule = "0 * * * *"
+
+[[cron]]
+path = "/api/jobs/guardian-watchdog"
+schedule = "30 * * * *"
+
+[[secret]]
+name = "PADDLE_API_KEY"
+required = false
+description = "Paddle Billing API key used to create KeyCounty checkout transactions. Add only after Paddle approves this business."
+
+[[secret]]
+name = "PADDLE_WEBHOOK_SECRET"
+required = false
+description = "Paddle notification destination secret key used to verify transaction.completed webhooks. Never commit the value to source."
+
+[[secret]]
+name = "RESEND_API_KEY"
+required = false
+description = "Optional Resend API key for delivering the daily KeyCounty growth pulse from admin@wah-lah.com to admin@wah-lah.com. Keep this value in Hatchable Setup; never commit it to source."
+
+[[secret]]
+name = "PADDLE_ENVIRONMENT"
+required = false
+description = "Must be exactly live for the pricing page to initialize; the page fails closed for any other or missing value."
+
+[[secret]]
+name = "PADDLE_CLIENT_TOKEN"
+required = false
+description = "Public client-side Paddle token for the approved live account. Must start with live_. Never put the server-side Paddle API key here."
+
+[[secret]]
+name = "PADDLE_PRICE_STARTER_MONTH"
+required = false
+description = "Live Paddle price ID for Starter monthly subscription (pri_...)."
+
+[[secret]]
+name = "PADDLE_PRICE_STARTER_YEAR"
+required = false
+description = "Live Paddle price ID for Starter yearly subscription (pri_...)."
+
+[[secret]]
+name = "PADDLE_PRICE_PRO_MONTH"
+required = false
+description = "Live Paddle price ID for Pro monthly subscription (pri_...)."
+
+[[secret]]
+name = "PADDLE_PRICE_PRO_YEAR"
+required = false
+description = "Live Paddle price ID for Pro yearly subscription (pri_...)."
+
+[[secret]]
+name = "PADDLE_PRICE_ADVANCED_MONTH"
+required = false
+description = "Live Paddle price ID for Advanced monthly subscription (pri_...)."
+
+[[secret]]
+name = "PADDLE_PRICE_ADVANCED_YEAR"
+required = false
+description = "Live Paddle price ID for Advanced yearly subscription (pri_...)."
+
+[[secret]]
+name = "STRIPE_ACCOUNT_ID"
+required = false
+description = "Live Stripe account ID (acct_...) approved specifically for Wah-Lah KeyCounty housing connection service payments. Must match the Stripe secret key account; never use the unrelated WAH-LAH Magic gaming account unless Stripe has explicitly approved KeyCounty on that merchant profile."
+
+[[secret]]
+name = "STRIPE_SECRET_KEY"
+required = false
+description = "Live Stripe secret API key used only by the server-side KeyCounty Checkout endpoint. Must begin with sk_live_; never place it in browser code or commit it to source."
+
+[[secret]]
+name = "STRIPE_WEBHOOK_SECRET"
+required = false
+description = "Stripe webhook signing secret for https://wah-lah-keycounty.hatchable.site/api/webhooks/stripe. Keep this secret in Hatchable Setup; never commit it to source."
+
+[[secret]]
+name = "STRIPE_KEYCOUNTY_ACCOUNT_CONFIRMED"
+required = false
+description = "Set to yes only after the owner confirms the KeyCounty Stripe merchant account and default payout bank, and the Stripe business profile accurately describes KeyCounty housing services. Checkout fails closed until confirmed."

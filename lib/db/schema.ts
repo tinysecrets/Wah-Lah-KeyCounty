@@ -49,7 +49,7 @@ export const applications = pgTable("applications", {
   paymentStatus: text("payment_status").notNull().default("unpaid"),
   paymentMethod: text("payment_method"),
   paymentReference: text("payment_reference"),
-  stripeSessionId: text("stripe_session_id"),
+  // Legacy checkout reference column is intentionally unused by the Paddle integration.
   feeCents: integer("fee_cents").notNull(),
   paidAt: timestamp("paid_at", { withTimezone: true }),
   adminNotes: text("admin_notes"),
