@@ -18,6 +18,10 @@ schedule = "0 * * * *"
 path = "/api/jobs/guardian-watchdog"
 schedule = "30 * * * *"
 
+[[cron]]
+path = "/api/jobs/notification-outbox"
+schedule = "0 * * * *"
+
 [[secret]]
 name = "PADDLE_API_KEY"
 required = false
@@ -87,6 +91,11 @@ description = "Live Stripe secret API key used only by the server-side KeyCounty
 name = "STRIPE_WEBHOOK_SECRET"
 required = false
 description = "Stripe webhook signing secret for https://wah-lah-keycounty.hatchable.site/api/webhooks/stripe. Keep this secret in Hatchable Setup; never commit it to source."
+
+[[secret]]
+name = "OPENROUTER_API_KEY"
+required = false
+description = "Optional OpenRouter API key for cloud-only property listing copy quality and Fair Housing red-flag review. Uses openrouter/free; never routes through local models or Google/Gemini. The AI reviewer cannot authorize or publish listings."
 
 [[secret]]
 name = "STRIPE_KEYCOUNTY_ACCOUNT_CONFIRMED"

@@ -1,4 +1,5 @@
-import { db } from "hatchable";
+import { db, scheduler } from "hatchable";
+import { queueEmail, escapeEmailHtml } from "lib/notifications.js";
 
 export const access = "public";
 export const methods = ["POST"];
@@ -41,9 +42,19 @@ export default async function (req, res) {
     "INSERT INTO area_search_leads (full_name,email,phone,requested_area,listing_type,max_price_cents,min_bedrooms,message,consent_to_contact) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id,created_at",
     [fullName,email,phone,requestedArea,listingType,maxPrice === null ? null : Math.round(maxPrice * 100),minBedrooms,message,consent]
   );
+  const leadId = result.rows[0].id;
+  const reference = "KC-AREA-" + leadId;
+  const customerText = "We received your Wah-Lah KeyCounty housing request.\nReference: " + reference + "\nArea: " + requestedArea + "\nRequest type: " + listingType + "\n\nYour request is saved for follow-up. This is not a promise that a matching property is available. You can reply to this email or contact admin@wah-lah.com for help.";
+  const customerHtml = "<p>We received your Wah-Lah KeyCounty housing request.</p><p><strong>Reference:</strong> " + reference + "<br><strong>Area:</strong> " + escapeEmailHtml(requestedArea) + "<br><strong>Request type:</strong> " + escapeEmailHtml(listingType) + "</p><p>Your request is saved for follow-up. This is not a promise that a matching property is available.</p><p>Reply to this email or contact <a href=\"mailto:admin@wah-lah.com\">admin@wah-lah.com</a> for help.</p>";
+  const adminText = "New consented KeyCounty area request.\nReference: " + reference + "\nName: " + fullName + "\nEmail: " + email + "\nPhone: " + (phone || "Not supplied") + "\nArea: " + requestedArea + "\nType: " + listingType + "\nReview and follow up in the KeyCounty Area Requests dashboard.";
+  const adminHtml = "<p>New consented KeyCounty area request.</p><p><strong>Reference:</strong> " + reference + "<br><strong>Name:</strong> " + escapeEmailHtml(fullName) + "<br><strong>Email:</strong> " + escapeEmailHtml(email) + "<br><strong>Phone:</strong> " + escapeEmailHtml(phone || "Not supplied") + "<br><strong>Area:</strong> " + escapeEmailHtml(requestedArea) + "<br><strong>Type:</strong> " + escapeEmailHtml(listingType) + "</p><p>Review and follow up in the KeyCounty Area Requests dashboard.</p>";
+  await queueEmail({eventKey:"area-lead:" + leadId + ":customer",to:email,subject:"We received your KeyCounty housing request",text:customerText,html:customerHtml});
+  await queueEmail({eventKey:"area-lead:" + leadId + ":admin",to:"admin@wah-lah.com",subject:"New KeyCounty housing request · " + reference,text:adminText,html:adminHtml});
+  try { await scheduler.now("/api/jobs/notification-outbox"); } catch (_) {}
   return res.status(201).json({
     ok: true,
-    leadId: result.rows[0].id,
-    message: "Your housing request is saved. Wah-Lah KeyCounty can follow up using the contact details you provided."
+    leadId,
+    notificationQueued: true,
+    message: "Your housing request is saved. A confirmation email is on its way, and Wah-Lah KeyCounty can follow up using the contact details you provided."
   });
 }

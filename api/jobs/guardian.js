@@ -77,6 +77,17 @@ export default async function (req, res) {
   }
 
   try {
+    const queue = await db.query("SELECT count(*) FILTER (WHERE status='pending')::int AS pending,count(*) FILTER (WHERE status='failed')::int AS failed,count(*) FILTER (WHERE status='sending' AND updated_at < now()-interval '10 minutes')::int AS stuck FROM customer_notification_outbox");
+    const pending = Number(queue.rows?.[0]?.pending || 0);
+    const failed = Number(queue.rows?.[0]?.failed || 0);
+    const stuck = Number(queue.rows?.[0]?.stuck || 0);
+    const status = failed || stuck ? "warning" : "ok";
+    record("customer_notifications", status, "Pending: " + pending + "; failed: " + failed + "; stuck: " + stuck + ". The scheduled outbox worker retries temporary delivery failures.");
+  } catch (e) {
+    record("customer_notifications", "critical", safeError(e));
+  }
+
+  try {
     const rows = await db.query("INSERT INTO system_health_checks (overall_status, checks) VALUES ($1,$2::jsonb) RETURNING id,checked_at", [overall, JSON.stringify(checks)]);
     for (const [component, item] of Object.entries(checks)) {
       const fingerprint = "guardian:" + component;
