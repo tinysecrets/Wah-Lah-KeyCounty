@@ -61,7 +61,7 @@ export default async function (req, res) {
     const apiKey = await config.get("STRIPE_SECRET_KEY");
     const webhook = await config.get("STRIPE_WEBHOOK_SECRET");
     const confirmed = String(await config.get("STRIPE_KEYCOUNTY_ACCOUNT_CONFIRMED") || "").trim().toLowerCase() === "yes";
-    const liveKey = /^sk_live_[A-Za-z0-9]+$/.test(String(apiKey || "").trim());
+    const liveKey = /^(?:sk_live_|rk_live_)[A-Za-z0-9]+$/.test(String(apiKey || "").trim());
     record("stripe_checkout_readiness", liveKey && webhook && confirmed ? "ok" : "warning", liveKey && webhook && confirmed ? "Live Stripe key, webhook, and owner-confirmed merchant/payout destination are present." : "Live checkout remains locked until the Stripe key, webhook, merchant profile, and payout destination are confirmed.");
   } catch (e) {
     record("stripe_checkout_readiness", "warning", "Stripe payment configuration could not be verified: " + safeError(e));
