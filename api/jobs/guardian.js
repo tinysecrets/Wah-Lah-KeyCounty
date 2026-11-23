@@ -61,7 +61,7 @@ export default async function (req, res) {
     const apiKey = await config.get("STRIPE_SECRET_KEY");
     const webhook = await config.get("STRIPE_WEBHOOK_SECRET");
     const confirmed = String(await config.get("STRIPE_KEYCOUNTY_ACCOUNT_CONFIRMED") || "").trim().toLowerCase() === "yes";
-    const liveKey = /^sk_live_[A-Za-z0-9]+$/.test(String(apiKey || "").trim());
+    const liveKey = /^(?:sk_live_|rk_live_)[A-Za-z0-9]+$/.test(String(apiKey || "").trim());
     record("stripe_checkout_readiness", liveKey && webhook && confirmed ? "ok" : "warning", liveKey && webhook && confirmed ? "Live Stripe key, webhook, and owner-confirmed merchant/payout destination are present." : "Live checkout remains locked until the Stripe key, webhook, merchant profile, and payout destination are confirmed.");
   } catch (e) {
     record("stripe_checkout_readiness", "warning", "Stripe payment configuration could not be verified: " + safeError(e));
@@ -74,6 +74,17 @@ export default async function (req, res) {
     record("growth_email_delivery", pulseHealthy ? "ok" : "warning", pulseHealthy ? "Daily growth email was accepted by Resend within the last 26 hours." : (!latestPulse ? "No daily growth email has been recorded yet." : (!latestPulse.email_sent ? "Latest growth email failed: " + safeError(latestPulse.email_error) : "Last successful growth email is older than 26 hours.")));
   } catch (e) {
     record("growth_email_delivery", "critical", safeError(e));
+  }
+
+  try {
+    const queue = await db.query("SELECT count(*) FILTER (WHERE status='pending')::int AS pending,count(*) FILTER (WHERE status='failed')::int AS failed,count(*) FILTER (WHERE status='sending' AND updated_at < now()-interval '10 minutes')::int AS stuck FROM customer_notification_outbox");
+    const pending = Number(queue.rows?.[0]?.pending || 0);
+    const failed = Number(queue.rows?.[0]?.failed || 0);
+    const stuck = Number(queue.rows?.[0]?.stuck || 0);
+    const status = failed || stuck ? "warning" : "ok";
+    record("customer_notifications", status, "Pending: " + pending + "; failed: " + failed + "; stuck: " + stuck + ". The scheduled outbox worker retries temporary delivery failures.");
+  } catch (e) {
+    record("customer_notifications", "critical", safeError(e));
   }
 
   try {

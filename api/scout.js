@@ -1,4 +1,5 @@
 import { db } from "hatchable";
+import { evaluateRiverRegion } from "lib/river-region-guardrails.js";
 
 export const access = "admin";
 export const methods = ["GET", "POST"];
@@ -14,7 +15,7 @@ const slugify = (v) => clean(v, 180).toLowerCase().normalize("NFKD")
 export default async function (req, res) {
   if (req.method === "GET") {
     const [leads, summary, sources, lastRun] = await Promise.all([
-      db.query("SELECT id,listing_type,title,property_type,address,city,state,price_cents,bedrooms,bathrooms,sqft,source_name,source_url,source_status,review_status,last_checked_at,last_seen_at,notes,display_rights,image_urls,created_at,updated_at FROM scout_leads ORDER BY CASE review_status WHEN 'needs_review' THEN 0 WHEN 'verified' THEN 1 ELSE 2 END, updated_at DESC LIMIT 300"),
+      db.query("SELECT id,listing_type,title,property_type,address,city,state,price_cents,bedrooms,bathrooms,sqft,source_name,source_url,source_status,review_status,last_checked_at,last_seen_at,notes,display_rights,county,county_fips,county_verified,owner_authorized,owner_authorization_reference,owner_authorized_at,image_urls,created_at,updated_at FROM scout_leads ORDER BY CASE review_status WHEN 'needs_review' THEN 0 WHEN 'verified' THEN 1 ELSE 2 END, updated_at DESC LIMIT 300"),
       db.query("SELECT count(*)::int total,count(*) FILTER (WHERE review_status='needs_review')::int needs_review,count(*) FILTER (WHERE review_status='verified')::int verified,count(*) FILTER (WHERE listing_type='rent')::int rentals,count(*) FILTER (WHERE listing_type='sale')::int sales,count(*) FILTER (WHERE display_rights=true)::int display_licensed FROM scout_leads"),
       db.query("SELECT id,source_name,feed_url,feed_format,enabled,rights_status,last_checked_at,last_error,notes FROM scout_sources ORDER BY enabled DESC,source_name ASC"),
       db.query("SELECT id,started_at,finished_at,run_status,sources_checked,candidates_seen,candidates_added,candidates_updated,errors FROM scout_run_log ORDER BY started_at DESC LIMIT 1")
@@ -75,6 +76,20 @@ export default async function (req, res) {
     return res.json({ok:true,source:rows[0]});
   }
 
+  if (b.action === "authorizeOwner") {
+    const leadId=Number(b.id), reference=clean(b.authorizationReference,1000);
+    if(!Number.isInteger(leadId)||leadId<=0||reference.length<8)
+      return res.status(400).json({ok:false,error:"Provide a valid candidate ID and a verifiable owner authorization reference."});
+    const {rows}=await db.query("SELECT * FROM scout_leads WHERE id=$1 LIMIT 1",[leadId]);
+    const lead=rows[0];
+    if(!lead)return res.status(404).json({ok:false,error:"Candidate not found."});
+    if(lead.display_rights!==true || lead.county_verified!==true || !["01001","01051","01085","01101"].includes(String(lead.county_fips||"").trim()))
+      return res.status(409).json({ok:false,error:"Owner authorization cannot be recorded until feed display rights and street-address county verification pass independently."});
+    await db.query("UPDATE scout_leads SET owner_authorized=TRUE,owner_authorization_reference=$1,owner_authorized_at=now(),updated_at=now() WHERE id=$2",[reference,leadId]);
+    await db.query("INSERT INTO review_audits (target_type,target_id,reviewer_model,decision,county_fips,display_rights_verified,owner_authorized_verified,reasons) VALUES ('scout_lead',$1,'admin_owner_authorization_review','held',$2,TRUE,TRUE,$3::jsonb)",[leadId,lead.county_fips,JSON.stringify(["owner_authorization_reference_recorded_by_admin","awaiting_publish_action"])]);
+    return res.json({ok:true,ownerAuthorized:true,message:"Owner authorization recorded separately from source display rights. Publication remains a separate action."});
+  }
+
   if (b.action === "publish") {
     const leadId=Number(b.id);
     if(!Number.isInteger(leadId)||leadId<=0)return res.status(400).json({ok:false,error:"Invalid candidate id."});
@@ -82,7 +97,8 @@ export default async function (req, res) {
     const lead=rows[0];
     if(!lead)return res.status(404).json({ok:false,error:"Candidate not found."});
     if(lead.review_status==="rejected"||lead.review_status==="stale")return res.status(409).json({ok:false,error:"Rejected or stale candidates cannot be published."});
-    if(lead.display_rights!==true)return res.status(403).json({ok:false,error:"This source has not granted public display rights. It can stay in the private scout queue, but its listing data/photos cannot be published from this candidate."});
+    const gate=evaluateRiverRegion({...lead,county_verified:lead.county_verified===true});
+    if(!gate.eligible || !lead.owner_authorization_reference)return res.status(403).json({ok:false,error:"Publication requires independent display rights, recorded owner authorization, and Census-verified FIPS in the four-county River Region.",reasons:gate.reasons});
     if(!lead.last_checked_at||Date.now()-new Date(lead.last_checked_at).getTime()>48*60*60*1000)return res.status(409).json({ok:false,error:"Candidate is older than 48 hours. Wait for a successful feed refresh before publishing."});
     if(!["rent","sale"].includes(lead.listing_type))return res.status(409).json({ok:false,error:"Unsupported listing type."});
     if(!lead.address||!lead.city||!lead.state||!lead.price_cents||lead.price_cents<=0||lead.bedrooms==null||lead.bathrooms==null||(lead.listing_type==="rent"&&(lead.sqft==null||lead.sqft<=0)))
@@ -92,13 +108,14 @@ export default async function (req, res) {
     const existing=await db.query("SELECT id FROM homes WHERE source_url=$1 AND external_listing=true LIMIT 1",[lead.source_url]);
     let home;
     if(existing.rows.length){
-      const updated=await db.query("UPDATE homes SET listing_type=$1,title=$2,address=$3,city=$4,state=$5,zip=$6,rent_cents=$7,sale_price_cents=$8,deposit_cents=$9,bedrooms=$10,bathrooms=$11,sqft=$12,property_type=$13,description=$14,image_url=$15,image_urls=$16::jsonb,features='[]'::jsonb,is_available=true,listing_status='available',status_updated_at=now(),status_note='Refreshed under permitted listing feed.',source_url=$17,source_name=$18,external_listing=true,available_from='Verify current terms at source' WHERE id=$19 RETURNING id,slug,title",[lead.listing_type,lead.title,lead.address,lead.city,lead.state,clean(lead.zip,20),lead.listing_type==="rent"?lead.price_cents:0,lead.listing_type==="sale"?lead.price_cents:null,lead.listing_type==="rent"?lead.price_cents:0,lead.bedrooms,lead.bathrooms,lead.sqft||0,lead.property_type==="single family"?"Single-family home":clean(lead.property_type,100)||"House",clean(lead.notes,1500)||"Source-linked listing. Confirm current terms at the source.",imageUrls[0]||"",JSON.stringify(imageUrls),lead.source_url,lead.source_name,existing.rows[0].id]);
+      const updated=await db.query("UPDATE homes SET listing_type=$1,title=$2,address=$3,city=$4,state=$5,zip=$6,rent_cents=$7,sale_price_cents=$8,deposit_cents=$9,bedrooms=$10,bathrooms=$11,sqft=$12,property_type=$13,description=$14,image_url=$15,image_urls=$16::jsonb,features='[]'::jsonb,is_available=true,listing_status='available',status_updated_at=now(),status_note='Published after independent rights and county review.',source_url=$17,source_name=$18,external_listing=true,available_from='Verify current terms at source',county=$20,county_fips=$21,display_rights=true,owner_authorized=true,owner_authorized_at=now(),authorization_note=$22,last_verified_at=now(),source_status='verified' WHERE id=$19 RETURNING id,slug,title",[lead.listing_type,lead.title,lead.address,lead.city,lead.state,clean(lead.zip,20),lead.listing_type==="rent"?lead.price_cents:0,lead.listing_type==="sale"?lead.price_cents:null,lead.listing_type==="rent"?lead.price_cents:0,lead.bedrooms,lead.bathrooms,lead.sqft||0,lead.property_type==="single family"?"Single-family home":clean(lead.property_type,100)||"House",clean(lead.notes,1500)||"Source-linked listing. Confirm current terms at the source.",imageUrls[0]||"",JSON.stringify(imageUrls),lead.source_url,lead.source_name,existing.rows[0].id,lead.county,lead.county_fips,lead.owner_authorization_reference]);
       home=updated.rows[0];
     } else {
-      const inserted=await db.query("INSERT INTO homes (slug,title,address,city,state,zip,rent_cents,deposit_cents,sale_price_cents,bedrooms,bathrooms,sqft,listing_type,property_type,description,image_url,image_urls,features,pets_allowed,available_from,is_available,featured,listing_status,status_updated_at,status_note,source_url,source_name,external_listing) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb,'[]'::jsonb,false,'Verify current terms at source',true,false,'available',now(),'Imported under permitted listing feed.',$18,$19,true) RETURNING id,slug,title",[slug,lead.title,lead.address,lead.city,lead.state,clean(lead.zip,20),lead.listing_type==="rent"?lead.price_cents:0,lead.listing_type==="rent"?lead.price_cents:0,lead.listing_type==="sale"?lead.price_cents:null,lead.bedrooms,lead.bathrooms,lead.sqft||0,lead.listing_type,lead.property_type==="single family"?"Single-family home":clean(lead.property_type,100)||"House",clean(lead.notes,1500)||"Source-linked listing. Confirm current terms at the source.",imageUrls[0]||"",JSON.stringify(imageUrls),lead.source_url,lead.source_name]);
+      const inserted=await db.query("INSERT INTO homes (slug,title,address,city,state,zip,rent_cents,deposit_cents,sale_price_cents,bedrooms,bathrooms,sqft,listing_type,property_type,description,image_url,image_urls,features,pets_allowed,available_from,is_available,featured,listing_status,status_updated_at,status_note,source_url,source_name,external_listing,county,county_fips,display_rights,owner_authorized,owner_authorized_at,authorization_note,last_verified_at,source_status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb,'[]'::jsonb,false,'Verify current terms at source',true,false,'available',now(),'Published after independent rights and county review.',$18,$19,true,$20,$21,true,true,now(),$22,now(),'verified') RETURNING id,slug,title",[slug,lead.title,lead.address,lead.city,lead.state,clean(lead.zip,20),lead.listing_type==="rent"?lead.price_cents:0,lead.listing_type==="rent"?lead.price_cents:0,lead.listing_type==="sale"?lead.price_cents:null,lead.bedrooms,lead.bathrooms,lead.sqft||0,lead.listing_type,lead.property_type==="single family"?"Single-family home":clean(lead.property_type,100)||"House",clean(lead.notes,1500)||"Source-linked listing. Confirm current terms at the source.",imageUrls[0]||"",JSON.stringify(imageUrls),lead.source_url,lead.source_name,lead.county,lead.county_fips,lead.owner_authorization_reference]);
       home=inserted.rows[0];
     }
     await db.query("UPDATE scout_leads SET review_status='published',source_status='published',last_checked_at=now(),updated_at=now() WHERE id=$1",[leadId]);
+    await db.query("INSERT INTO review_audits (target_type,target_id,reviewer_model,decision,county_fips,display_rights_verified,owner_authorized_verified,reasons) VALUES ('home',$1,'admin_publish_gate','approved',$2,TRUE,TRUE,$3::jsonb)",[home.id,lead.county_fips,JSON.stringify(['four_county_census_geocode_verified','source_display_rights_verified','owner_authorization_reference_recorded'])]);
     return res.json({ok:true,home,message:"Added to public KeyCounty listings."});
   }
 

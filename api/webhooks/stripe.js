@@ -28,7 +28,7 @@ export default async function (req, res) {
   for (const signature of signatures) {
     try {
       verified = await webhooks.verifyHmac({
-        raw: timestamp + ":" + req.rawBody,
+        raw: timestamp + "." + req.rawBody,
         signature,
         secret,
         algorithm:"sha256",

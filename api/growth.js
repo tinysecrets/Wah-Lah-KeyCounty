@@ -4,7 +4,7 @@ export const access = "admin";
 export const methods = ["GET"];
 
 export default async function (req,res) {
-  const [inventory,markets,events,sources,leads,paid,submissions,pulses,traffic,channels,health,incidents] = await Promise.all([
+  const [inventory,markets,events,sources,leads,paid,submissions,pulses,traffic,channels,health,incidents,notifications] = await Promise.all([
     db.query("SELECT count(*) FILTER (WHERE is_available=true AND listing_status='available' AND status_updated_at >= now()-interval '24 hours')::int AS total,count(*) FILTER (WHERE is_available=true AND listing_status='available' AND status_updated_at >= now()-interval '24 hours' AND listing_type='rent')::int AS rentals,count(*) FILTER (WHERE is_available=true AND listing_status='available' AND status_updated_at >= now()-interval '24 hours' AND listing_type='sale')::int AS sales,count(*) FILTER (WHERE listing_status='hidden' AND status_note LIKE 'Auto-hidden because listing status was not re-confirmed%')::int AS stale FROM homes"),
     db.query("SELECT city,state,listing_type,count(*)::int AS count FROM homes WHERE is_available=true AND listing_status='available' AND status_updated_at >= now()-interval '24 hours' GROUP BY city,state,listing_type ORDER BY city,state,listing_type"),
     db.query("SELECT event_name,count(*)::int AS count FROM growth_events WHERE created_at >= now()-interval '7 days' GROUP BY event_name ORDER BY count DESC"),
@@ -16,7 +16,8 @@ export default async function (req,res) {
     db.query("SELECT count(*) FILTER (WHERE event_name='page_view' AND created_at>=now()-interval '24 hours')::int AS page_views_24h,count(*) FILTER (WHERE event_name='page_view' AND created_at>=now()-interval '7 days')::int AS page_views_7d,count(DISTINCT event_metadata->>'visitorSession') FILTER (WHERE event_name='page_view' AND created_at>=now()-interval '7 days')::int AS unique_sessions_7d FROM growth_events"),
     db.query("SELECT COALESCE(NULLIF(utm_source,''),NULLIF(event_metadata->>'referrerHost',''),'direct') AS channel,count(*) FILTER (WHERE event_name='page_view')::int AS views,count(DISTINCT event_metadata->>'visitorSession') FILTER (WHERE event_name='page_view')::int AS sessions FROM growth_events WHERE created_at>=now()-interval '7 days' GROUP BY 1 ORDER BY views DESC LIMIT 20"),
     db.query("SELECT id,checked_at,overall_status,checks FROM system_health_checks ORDER BY checked_at DESC LIMIT 1"),
-    db.query("SELECT component,severity,status,summary,last_seen_at,occurrences FROM system_incidents ORDER BY (status='open') DESC,last_seen_at DESC LIMIT 20")
+    db.query("SELECT component,severity,status,summary,last_seen_at,occurrences FROM system_incidents ORDER BY (status='open') DESC,last_seen_at DESC LIMIT 20"),
+    db.query("SELECT count(*) FILTER (WHERE status='pending')::int AS pending,count(*) FILTER (WHERE status='failed')::int AS failed,count(*) FILTER (WHERE status='sent' AND sent_at>=now()-interval '24 hours')::int AS sent_24h FROM customer_notification_outbox")
   ]);
   return res.json({
     generatedAt:new Date().toISOString(),
@@ -31,6 +32,7 @@ export default async function (req,res) {
     traffic:traffic.rows[0]||{page_views_24h:0,page_views_7d:0,unique_sessions_7d:0},
     channels7d:channels.rows,
     health:health.rows[0]||null,
-    incidents:incidents.rows
+    incidents:incidents.rows,
+    notifications:notifications.rows[0]||{pending:0,failed:0,sent_24h:0}
   });
 }

@@ -1,4 +1,5 @@
-import { db, email } from "hatchable";
+import { db, scheduler } from "hatchable";
+import { queueEmail, escapeEmailHtml } from "lib/notifications.js";
 
 export const access = "public";
 export const methods = ["POST"];
@@ -48,6 +49,14 @@ export default async function (req, res) {
     });
   }
 
+  const recent = await db.query(
+    "SELECT count(*)::int AS total FROM listing_submissions WHERE lower(owner_email)=$1 AND created_at > now()-interval '24 hours'",
+    [emailAddress]
+  );
+  if (Number(recent.rows[0]?.total || 0) >= 3) {
+    return res.status(429).json({ ok: false, message: "We already received several property submissions for this email today. Please try again tomorrow." });
+  }
+
   const cents = Math.round(listedPrice * 100);
   const monthlyRentCents = listingType === "rent" ? cents : null;
   const salePriceCents = listingType === "sale" ? cents : null;
@@ -63,20 +72,21 @@ export default async function (req, res) {
     ]
   );
 
-  // The pending-review database queue remains authoritative if mail is unavailable.
-  try {
-    await email.send({
-      to: "admin@wah-lah.com",
-      subject: "New Wah-Lah KeyCounty property submission",
-      text: "A new " + (listingType === "sale" ? "for-sale" : "for-rent/lease") + " property submission needs review.\nProperty: " + title + "\nArea: " + city + ", " + state + "\nSubmitter: " + name + " <" + emailAddress + ">\nReview it in the KeyCounty Control Center.",
-      html: "<p>A new property submission needs review.</p><p><strong>Type:</strong> " + (listingType === "sale" ? "For sale" : "For rent / lease") + "<br><strong>Property:</strong> " + esc(title) + "<br><strong>Area:</strong> " + esc(city) + ", " + esc(state) + "<br><strong>Submitter:</strong> " + esc(name) + " &lt;" + esc(emailAddress) + "&gt;</p><p>Review it in the KeyCounty Control Center.</p>"
-    });
-  } catch (_) {}
+  const submissionId = rows[0]?.id;
+  const kind = listingType === "sale" ? "for-sale" : "for-rent/lease";
+  const customerText = "We received your Wah-Lah KeyCounty property submission.\nSubmission: KC-LISTING-" + submissionId + "\nProperty: " + title + "\nArea: " + city + ", " + state + "\n\nYour property is pending review. It is not published yet. We will review authorization, listing details, and photo rights before deciding whether it can appear in the marketplace. There is no charge for submitting this review request.";
+  const customerHtml = "<p>We received your Wah-Lah KeyCounty property submission.</p><p><strong>Submission:</strong> KC-LISTING-" + submissionId + "<br><strong>Property:</strong> " + escapeEmailHtml(title) + "<br><strong>Area:</strong> " + escapeEmailHtml(city) + ", " + escapeEmailHtml(state) + "</p><p>Your property is pending review. It is not published yet. We will review authorization, listing details, and photo rights before deciding whether it can appear in the marketplace. There is no charge for submitting this review request.</p>";
+  const adminText = "A new " + kind + " property submission needs review.\nSubmission: KC-LISTING-" + submissionId + "\nProperty: " + title + "\nArea: " + city + ", " + state + "\nSubmitter: " + name + " <" + emailAddress + ">\nReview it in the KeyCounty Control Center.";
+  const adminHtml = "<p>A new " + kind + " property submission needs review.</p><p><strong>Submission:</strong> KC-LISTING-" + submissionId + "<br><strong>Property:</strong> " + escapeEmailHtml(title) + "<br><strong>Area:</strong> " + escapeEmailHtml(city) + ", " + escapeEmailHtml(state) + "<br><strong>Submitter:</strong> " + escapeEmailHtml(name) + " &lt;" + escapeEmailHtml(emailAddress) + "&gt;</p><p>Review it in the KeyCounty Control Center.</p>";
+  await queueEmail({eventKey:"listing-submission:" + submissionId + ":customer",to:emailAddress,subject:"KeyCounty received your property submission",text:customerText,html:customerHtml});
+  await queueEmail({eventKey:"listing-submission:" + submissionId + ":admin",to:"admin@wah-lah.com",subject:"New KeyCounty property submission · " + submissionId,text:adminText,html:adminHtml});
+  try { await scheduler.now("/api/jobs/notification-outbox"); } catch (_) {}
 
   return res.status(201).json({
     ok: true,
-    id: rows[0]?.id,
+    id: submissionId,
     status: "pending_review",
-    message: "Property received for review. Sale and rent/lease submissions use the same KeyCounty marketplace. We review authorization, details, and photos before publication."
+    notificationQueued: true,
+    message: "Property received for review. A confirmation email is on its way. Sale and rent/lease submissions use the same KeyCounty marketplace. We review authorization, details, and photos before publication."
   });
 }

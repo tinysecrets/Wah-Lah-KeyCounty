@@ -1,4 +1,5 @@
-import { db } from "hatchable";
+import { db, scheduler } from "hatchable";
+import { queueEmail, escapeEmailHtml } from "lib/notifications.js";
 export const access = "public";
 export const methods = ["POST"];
 
@@ -26,8 +27,16 @@ export default async function (req, res) {
     return res.status(400).json({ ok: false, message: "Enter a valid monthly income and an occupant count between 1 and 20." });
   }
 
+  const recent = await db.query(
+    "SELECT count(*)::int AS total FROM applications WHERE lower(email)=$1 AND created_at > now()-interval '1 hour'",
+    [email]
+  );
+  if (Number(recent.rows[0]?.total || 0) >= 3) {
+    return res.status(429).json({ ok: false, message: "We already received several applications for this email. Please try again later." });
+  }
+
   const { rows: homes } = await db.query(
-    "SELECT id, slug, is_available, listing_status, owner_authorized FROM homes WHERE id = $1",
+    "SELECT id, slug, title, is_available, listing_status, owner_authorized FROM homes WHERE id = $1",
     [homeId]
   );
   if (!homes[0] || !homes[0].is_available || homes[0].listing_status !== "available" || !homes[0].owner_authorized) {
@@ -53,18 +62,30 @@ export default async function (req, res) {
 
   if (fee === 0) {
     await db.query("UPDATE applications SET payment_status='paid',status='under_review',updated_at=now() WHERE reference_code=$1", [ref]);
-    return res.status(201).json({ ok: true, referenceCode: ref, feeCents: 0, paymentRequired: false, paymentCollected: true });
   }
 
-  // Stripe Checkout is created server-side after the application is saved.
+  const propertyTitle = clean(homes[0].title || "selected home", 180);
+  const paymentNote = fee > 0
+    ? "The one-time application service fee is $" + (fee / 100).toFixed(2) + " and has not been paid yet. Continue to secure Stripe checkout from the page. This fee does not reserve the property or guarantee approval."
+    : "No application service fee is due.";
+  const customerText = "Your Wah-Lah KeyCounty application has been saved.\nReference: " + ref + "\nProperty: " + propertyTitle + "\n\n" + paymentNote + "\n\nKeep this reference and your email for request-status checks.";
+  const customerHtml = "<p>Your Wah-Lah KeyCounty application has been saved.</p><p><strong>Reference:</strong> " + ref + "<br><strong>Property:</strong> " + escapeEmailHtml(propertyTitle) + "</p><p>" + escapeEmailHtml(paymentNote) + "</p><p>Keep this reference and your email for request-status checks.</p>";
+  const adminText = "New KeyCounty application saved.\nReference: " + ref + "\nProperty: " + propertyTitle + "\nPayment: " + (fee > 0 ? "unpaid — checkout required" : "no fee due; marked paid") + "\nReview the application in the KeyCounty Control Center. Do not treat an unpaid application as paid.";
+  const adminHtml = "<p>New KeyCounty application saved.</p><p><strong>Reference:</strong> " + ref + "<br><strong>Property:</strong> " + escapeEmailHtml(propertyTitle) + "<br><strong>Payment:</strong> " + (fee > 0 ? "Unpaid — checkout required" : "No fee due; marked paid") + "</p><p>Review the application in the KeyCounty Control Center. Do not treat an unpaid application as paid.</p>";
+  await queueEmail({eventKey:"application:" + ref + ":customer",to:email,subject:"Your KeyCounty application is saved · " + ref,text:customerText,html:customerHtml});
+  await queueEmail({eventKey:"application:" + ref + ":admin",to:"admin@wah-lah.com",subject:"New KeyCounty application · " + ref,text:adminText,html:adminHtml});
+  try { await scheduler.now("/api/jobs/notification-outbox"); } catch (_) {}
 
   return res.status(201).json({
     ok: true,
     referenceCode: ref,
     feeCents: fee,
-    paymentRequired: true,
-    paymentCollected: false,
+    paymentRequired: fee > 0,
+    paymentCollected: fee === 0,
+    notificationQueued: true,
     email,
-    message: "Your rental application is saved. Continue to secure Stripe checkout to pay the application fee."
+    message: fee > 0
+      ? "Your rental application is saved. A confirmation email is on its way. Continue to secure Stripe checkout to pay the application fee."
+      : "Your rental application is saved. A confirmation email is on its way."
   });
 }

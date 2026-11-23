@@ -1,4 +1,6 @@
 import { db } from "hatchable";
+import { geocodeRiverCounty, evaluateRiverRegion } from "lib/river-region-guardrails.js";
+import { reviewListingCopy } from "lib/cloud-listing-review.js";
 
 export const access = "scheduler";
 export const methods = ["POST"];
@@ -114,7 +116,7 @@ export default async function (req, res) {
   const run = await db.query("INSERT INTO scout_run_log (run_status) VALUES ('running') RETURNING id");
   const runId = run.rows[0].id;
   const errors = [];
-  let checked = 0, seen = 0, added = 0, updated = 0;
+  let checked = 0, seen = 0, added = 0, updated = 0, peerReviewCalls = 0;
   try {
     const sourceResult = await db.query(
       "SELECT * FROM scout_sources WHERE enabled=true AND rights_status='display_allowed' AND (last_checked_at IS NULL OR (last_error IS NOT NULL AND last_checked_at < now() - interval '3 hours') OR (last_error IS NULL AND last_checked_at < now() - interval '6 hours')) ORDER BY CASE WHEN last_error IS NOT NULL THEN 0 ELSE 1 END,last_checked_at NULLS FIRST,id ASC LIMIT 4"
@@ -161,6 +163,7 @@ export default async function (req, res) {
           const item = normalize(sourceItem, source);
           if (!item) continue;
           localSeen++; seen++;
+          const geo = await geocodeRiverCounty([item.address,item.city,item.state].filter(Boolean).join(", "));
           const prior = await db.query("SELECT id FROM scout_leads WHERE source_url=$1 LIMIT 1", [item.source_url]);
           if (!prior.rows.length && added >= 20) break;
           const result = await db.query(
@@ -168,55 +171,43 @@ export default async function (req, res) {
             [item.listing_type,item.title,item.property_type,item.address,item.city||"Unknown",item.state||"NA",item.price_cents,item.bedrooms,item.bathrooms,item.sqft,item.source_name,item.source_url,item.image_urls[0]||null,JSON.stringify(item.image_urls),item.source_record_id,item.display_rights,item.note]
           );
           if (prior.rows.length) updated++; else added++;
-          // A successful source refresh also resets the 24-hour public-listing freshness clock.
+          await db.query("UPDATE scout_leads SET county=$1,county_fips=$2,county_verified=$3,updated_at=now() WHERE source_url=$4", [geo.county,geo.county_fips,geo.verified,item.source_url]);
+          // Refresh only already-published homes that independently retain both rights and verified county.
           await db.query(
-            "UPDATE homes SET listing_type=$1,title=$2,address=$3,city=$4,state=$5,zip=$6,rent_cents=$7,sale_price_cents=$8,deposit_cents=$9,bedrooms=$10,bathrooms=$11,sqft=$12,property_type=$13,description=$14,image_url=$15,image_urls=$16::jsonb,source_name=$17,status_updated_at=now() WHERE source_url=$18 AND external_listing=true AND is_available=true AND listing_status='available'",
-            [item.listing_type,item.title,item.address,item.city||"Unknown",item.state||"NA",item.zip||"",item.listing_type==="rent"?item.price_cents||0:0,item.listing_type==="sale"?item.price_cents:null,item.listing_type==="rent"?item.price_cents||0:0,item.bedrooms??0,item.bathrooms??0,item.sqft??0,item.property_type||"House",item.note||"Source-linked property; verify current terms at source.",item.image_urls[0]||"",JSON.stringify(item.image_urls),item.source_name,item.source_url]
+            "UPDATE homes SET listing_type=$1,title=$2,address=$3,city=$4,state=$5,zip=$6,rent_cents=$7,sale_price_cents=$8,deposit_cents=$9,bedrooms=$10,bathrooms=$11,sqft=$12,property_type=$13,description=$14,image_url=$15,image_urls=$16::jsonb,source_name=$17,county=$19,county_fips=$20,last_verified_at=now(),source_status='verified',status_updated_at=now() WHERE source_url=$18 AND external_listing=true AND is_available=true AND listing_status='available' AND UPPER(state)='AL' AND county_fips IN ('01001','01051','01085','01101') AND display_rights=TRUE AND owner_authorized=TRUE",
+            [item.listing_type,item.title,item.address,item.city||"Unknown",item.state||"NA",item.zip||"",item.listing_type==="rent"?item.price_cents||0:0,item.listing_type==="sale"?item.price_cents:null,item.listing_type==="rent"?item.price_cents||0:0,item.bedrooms??0,item.bathrooms??0,item.sqft??0,item.property_type||"House",item.note||"Source-linked property; verify current terms at source.",item.image_urls[0]||"",JSON.stringify(item.image_urls),item.source_name,item.source_url,geo.county,geo.county_fips]
           );
-          // AUTOPUBLISH: no owner/admin click is required for a current, complete,
-          // explicitly display-licensed residential listing from an enabled feed.
           const candidate = (await db.query("SELECT * FROM scout_leads WHERE source_url=$1 LIMIT 1",[item.source_url])).rows[0];
-          const normalizedState = stateCode(candidate?.state);
-          const validFacts = candidate && candidate.display_rights===true &&
-            candidate.source_status==="feed_active" && candidate.address && candidate.city &&
-            candidate.city!=="Unknown" && normalizedState && Number(candidate.price_cents)>0 &&
-            candidate.bedrooms!==null && Number(candidate.bedrooms)>=0 &&
-            candidate.bathrooms!==null && Number(candidate.bathrooms)>0 &&
-            (candidate.listing_type!=="rent" || Number(candidate.sqft)>0) &&
-            ["rent","sale"].includes(candidate.listing_type);
-          if (validFacts) {
-            const slugBase = clean(candidate.title,120).toLowerCase()
-              .replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,90) || "home";
-            const existingHome = await db.query(
-              "SELECT id FROM homes WHERE source_url=$1 AND external_listing=true LIMIT 1",[candidate.source_url]
-            );
-            if (existingHome.rows.length) {
-              await db.query(
-                "UPDATE homes SET listing_type=$1,title=$2,address=$3,city=$4,state=$5,zip=$6,rent_cents=$7,sale_price_cents=$8,deposit_cents=$9,bedrooms=$10,bathrooms=$11,sqft=$12,property_type=$13,description=$14,image_url=$15,image_urls=$16::jsonb,is_available=true,listing_status='available',status_updated_at=now(),status_note='Automatically published using current display-licensed feed data.',source_name=$17 WHERE id=$18",
-                [candidate.listing_type,candidate.title,candidate.address,candidate.city,candidate.state,clean(candidate.zip,20),candidate.listing_type==="rent"?candidate.price_cents:0,candidate.listing_type==="sale"?candidate.price_cents:null,candidate.listing_type==="rent"?candidate.price_cents:0,candidate.bedrooms,candidate.bathrooms,candidate.sqft||0,candidate.property_type||"House",clean(candidate.notes,1500)||"Source-linked listing. Confirm current terms with the listing source.",candidate.image_url||"",JSON.stringify(Array.isArray(candidate.image_urls)?candidate.image_urls:[]),candidate.source_name,existingHome.rows[0].id]
-              );
-            } else {
-              await db.query(
-                "INSERT INTO homes (slug,title,address,city,state,zip,rent_cents,deposit_cents,sale_price_cents,bedrooms,bathrooms,sqft,listing_type,property_type,description,image_url,image_urls,features,pets_allowed,available_from,is_available,featured,listing_status,status_updated_at,status_note,source_url,source_name,external_listing,owner_authorized) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb,'[]'::jsonb,false,'Verify current terms at source',true,false,'available',now(),'Automatically published using current display-licensed feed data.',$18,$19,true,false)",
-                [slugBase+"-"+candidate.id,candidate.title,candidate.address,candidate.city,candidate.state,clean(candidate.zip,20),candidate.listing_type==="rent"?candidate.price_cents:0,candidate.listing_type==="rent"?candidate.price_cents:0,candidate.listing_type==="sale"?candidate.price_cents:null,candidate.bedrooms,candidate.bathrooms,candidate.sqft||0,candidate.listing_type,candidate.property_type||"House",clean(candidate.notes,1500)||"Source-linked listing. Confirm current terms with the listing source.",candidate.image_url||"",JSON.stringify(Array.isArray(candidate.image_urls)?candidate.image_urls:[]),candidate.source_url,candidate.source_name]
-              );
-            }
-            await db.query("UPDATE scout_leads SET review_status='published',updated_at=now() WHERE id=$1",[candidate.id]);
+          const gate = evaluateRiverRegion(candidate);
+          const decision = (!candidate?.display_rights || !candidate?.county_verified) ? "rejected" : "held";
+          const reasons = gate.reasons.length ? gate.reasons : ["awaiting_independent_owner_authorization_and_admin_review"];
+          await db.query("INSERT INTO review_audits (target_type,target_id,reviewer_model,decision,county_fips,display_rights_verified,owner_authorized_verified,reasons) VALUES ('scout_lead',$1,'deterministic_river_region_gate',$2,$3,$4,$5,$6::jsonb)",[candidate.id,decision,candidate.county_fips||null,candidate.display_rights===true,candidate.owner_authorized===true,JSON.stringify(reasons)]);
+          // Cloud AI reviews listing copy only; it never grants rights, makes applicant decisions, or publishes.
+          if (!prior.rows.length && candidate.county_verified === true && candidate.display_rights === true && peerReviewCalls < 10) {
+            peerReviewCalls++;
+            const peer = await reviewListingCopy({listing_type:item.listing_type,property_type:item.property_type,title:item.title,city:item.city,state:item.state,description:item.note});
+            const peerReasons = [...(peer.flags || [])];
+            if (peer.summary) peerReasons.push("summary:" + peer.summary);
+            if (!peer.configured) peerReasons.push("owner_must_add_OPENROUTER_API_KEY_in_Hatchable_Setup");
+            await db.query("INSERT INTO review_audits (target_type,target_id,reviewer_model,decision,county_fips,display_rights_verified,owner_authorized_verified,reasons) VALUES ('scout_lead',$1,$2,'held',$3,$4,$5,$6::jsonb)",[candidate.id,peer.model||"openrouter/free",candidate.county_fips||null,candidate.display_rights===true,candidate.owner_authorized===true,JSON.stringify(peerReasons.length?peerReasons:["cloud_copy_review_clear; manual_owner_authorization_and_admin_approval_still_required"])]);
           }
+          if (decision === "rejected") await db.query("UPDATE scout_leads SET review_status='rejected',updated_at=now() WHERE id=$1",[candidate.id]);
         }
-        await db.query("UPDATE scout_sources SET last_checked_at=now(),last_error=NULL,updated_at=now() WHERE id=$1", [source.id]);
+        await db.query("UPDATE scout_sources SET last_checked_at=now(),last_error=NULL,consecutive_feed_errors=0,last_error_at=NULL,last_http_status=NULL,updated_at=now() WHERE id=$1", [source.id]);
         // Keep source-level extraction stats in the run log, not as public listing claims.
       } catch (e) {
         const msg = clean(e?.message || e, 500);
         errors.push({source:source.source_name, error:msg});
-        await db.query("UPDATE scout_sources SET last_checked_at=now(),last_error=$1,updated_at=now() WHERE id=$2", [msg,source.id]);
+        const httpMatch = msg.match(/HTTP (\d{3})/i);
+        const httpStatus = httpMatch ? Number(httpMatch[1]) : null;
+        await db.query("UPDATE scout_sources SET last_checked_at=now(),last_error=$1,consecutive_feed_errors=consecutive_feed_errors+1,last_error_at=now(),last_http_status=$2,updated_at=now() WHERE id=$3", [msg,httpStatus,source.id]);
       }
     }
     const enabledFeeds = await db.query("SELECT count(*)::int AS total FROM scout_sources WHERE enabled=true AND rights_status='display_allowed'");
     const status = checked === 0 ? (enabledFeeds.rows[0]?.total > 0 ? "no_sources_due" : "waiting_for_display_licensed_feed") : (errors.length ? (checked===errors.length?"source_errors":"partial_success") : "success");
     await db.query("UPDATE scout_run_log SET finished_at=now(),run_status=$1,sources_checked=$2,candidates_seen=$3,candidates_added=$4,candidates_updated=$5,errors=$6::jsonb WHERE id=$7",
       [status,checked,seen,added,updated,JSON.stringify(errors),runId]);
-    return res.json({ok:true,runId,status,limits:{maxSourcesPerRun:4,maxCandidatesProcessedPerFeed:100,maxNewCandidatesPerRun:20,sourceCooldownHours:6},sourcesChecked:checked,candidatesSeen:seen,candidatesAdded:Math.min(added,20),candidatesUpdated:updated,errors,sourceNote:checked===0?"Authorized feeds exist, but none is due for its six-hour refresh window. No unlicensed pages or photos were copied.":undefined});
+    return res.json({ok:true,runId,status,limits:{maxSourcesPerRun:4,maxCandidatesProcessedPerFeed:100,maxNewCandidatesPerRun:20,sourceCooldownHours:6},sourcesChecked:checked,candidatesSeen:seen,candidatesAdded:Math.min(added,20),candidatesUpdated:updated,cloudPeerReviews:peerReviewCalls,errors,sourceNote:checked===0?(enabledFeeds.rows[0]?.total>0?"Authorized feeds exist, but none is due for its six-hour refresh window. No unlicensed pages or photos were copied.":"No enabled display-licensed feeds are configured. Direct owner submissions remain pending manual authorization review; no unlicensed pages or photos were copied."):undefined});
   } catch (e) {
     const msg = clean(e?.message || e, 500);
     await db.query("UPDATE scout_run_log SET finished_at=now(),run_status='error',errors=$1::jsonb WHERE id=$2",[JSON.stringify([{error:msg}]),runId]);
