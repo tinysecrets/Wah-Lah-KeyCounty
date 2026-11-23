@@ -4,5 +4,7 @@
   <url><loc>https://wah-lah-keycounty.hatchable.site/pricing</loc><changefreq>monthly</changefreq><priority>0.5</priority></url>
   <url><loc>https://wah-lah-keycounty.hatchable.site/welcome/</loc><changefreq>monthly</changefreq><priority>0.4</priority></url>
   <url><loc>https://wah-lah-keycounty.hatchable.site/policy/</loc><changefreq>monthly</changefreq><priority>0.3</priority></url>
+  <url><loc>https://wah-lah-keycounty.hatchable.site/privacy/</loc><changefreq>monthly</changefreq><priority>0.3</priority></url>
+  <url><loc>https://wah-lah-keycounty.hatchable.site/terms/</loc><changefreq>monthly</changefreq><priority>0.3</priority></url>
   <url><loc>https://wah-lah-keycounty.hatchable.site/status/</loc><changefreq>monthly</changefreq><priority>0.3</priority></url>
 </urlset>
