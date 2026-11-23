@@ -14,12 +14,12 @@ export default async function (req, res) {
     return res.status(400).json({ ok:false, message:"A valid request reference and email are required." });
   }
 
-  let secret = "", webhookSecret = "", accountConfirmed = "", expectedAccountId = "";
+  let secret = "", webhookSecret = "", expectedAccountId = "", merchantConfirmed = "";
   try { secret = String(await config.get("STRIPE_SECRET_KEY") || "").trim(); } catch (_) {}
   try { webhookSecret = String(await config.get("STRIPE_WEBHOOK_SECRET") || "").trim(); } catch (_) {}
-  try { accountConfirmed = String(await config.get("STRIPE_KEYCOUNTY_ACCOUNT_CONFIRMED") || "").trim().toLowerCase(); } catch (_) {}
   try { expectedAccountId = String(await config.get("STRIPE_ACCOUNT_ID") || "").trim(); } catch (_) {}
-  if (!/^sk_live_[A-Za-z0-9]+$/.test(secret) || !webhookSecret || !/^acct_[A-Za-z0-9]+$/.test(expectedAccountId) || accountConfirmed !== "yes") {
+  try { merchantConfirmed = String(await config.get("STRIPE_KEYCOUNTY_ACCOUNT_CONFIRMED") || "").trim().toLowerCase(); } catch (_) {}
+  if (!/^(?:sk_live_|rk_live_)[A-Za-z0-9]+$/.test(secret) || !webhookSecret || !/^acct_[A-Za-z0-9]+$/.test(expectedAccountId) || merchantConfirmed !== "yes") {
     return res.status(503).json({
       ok:false,
       code:"stripe_setup_required",
@@ -35,9 +35,13 @@ export default async function (req, res) {
     if (!checkResponse.ok || accountCheck.id !== expectedAccountId) {
       return res.status(503).json({ok:false,code:"stripe_account_mismatch",message:"The configured Stripe key does not resolve to the approved KeyCounty merchant account. Checkout is locked; no payment was taken."});
     }
-    const profileText = String(accountCheck.business_profile?.product_description || "");
-    if (!/keycounty/i.test(profileText) || !/(housing|home|property|real estate)/i.test(profileText)) {
-      return res.status(503).json({ok:false,code:"stripe_profile_mismatch",message:"The Stripe merchant profile still does not identify KeyCounty housing services. Update the merchant profile before accepting payments."});
+    const requirements = accountCheck.requirements || {};
+    // Stripe's account-level payouts_enabled flag is authoritative here.
+    // Restricted live keys may not expose external_accounts or profile fields.
+    if (accountCheck.charges_enabled !== true || accountCheck.payouts_enabled !== true ||
+        (requirements.currently_due || []).length ||
+        (requirements.past_due || []).length || requirements.disabled_reason) {
+      return res.status(503).json({ok:false,code:"stripe_account_not_ready",message:"Stripe has not confirmed active charges, payouts, the default USD payout bank, and all current verification requirements. Checkout remains locked; no payment was taken."});
     }
   } catch (_) {
     return res.status(503).json({ok:false,code:"stripe_account_check_failed",message:"The live Stripe merchant account could not be verified. Checkout is locked; no payment was taken."});
